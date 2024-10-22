@@ -519,20 +519,13 @@ export function languageServerWithTransport(options: LanguageServerOptions) {
                     let trigKind: CompletionTriggerKind =
                         CompletionTriggerKind.Invoked;
                     let trigChar: string | undefined;
-                    if (
-                        !explicit &&
-                        plugin.client.capabilities?.completionProvider?.triggerCharacters?.includes(
-                            line.text[pos - line.from - 1]
-                        )
-                    ) {
-                        trigKind = CompletionTriggerKind.TriggerCharacter;
-                        trigChar = line.text[pos - line.from - 1];
-                    }
-                    if (
-                        trigKind === CompletionTriggerKind.Invoked &&
-                        !context.matchBefore(/\w+$/)
-                    ) {
-                        return null;
+                    if (!explicit) {
+                        if (plugin.client.capabilities?.completionProvider?.triggerCharacters?.includes(
+                                line.text[pos - line.from - 1])
+                            ) {
+                            trigKind = CompletionTriggerKind.TriggerCharacter;
+                            trigChar = line.text[pos - line.from - 1];
+                        } else if (!context.matchBefore(/\w+$/)) return null;
                     }
                     return await plugin.requestCompletion(
                         context,
