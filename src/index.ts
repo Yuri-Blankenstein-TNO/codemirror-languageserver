@@ -20,7 +20,7 @@ import type {
 } from '@codemirror/autocomplete';
 import type { PublishDiagnosticsParams } from 'vscode-languageserver-protocol';
 import type { ViewUpdate, PluginValue } from '@codemirror/view';
-import type { Text } from '@codemirror/state';
+import { Text } from '@codemirror/state';
 import type * as LSP from 'vscode-languageserver-protocol';
 import { Transport } from '@open-rpc/client-js/build/transports/Transport';
 
@@ -36,6 +36,8 @@ const useLast = (values: readonly any[]) => values.reduce((_, v) => v, '');
 const client = Facet.define<LanguageServerClient, LanguageServerClient>({ combine: useLast });
 const documentUri = Facet.define<string, string>({ combine: useLast });
 const languageId = Facet.define<string, string>({ combine: useLast });
+const prefix = Facet.define<Text, Text>({ combine: useLast });
+const suffix = Facet.define<Text, Text>({ combine: useLast });
 
 // https://microsoft.github.io/language-server-protocol/specifications/specification-current/
 
@@ -241,6 +243,8 @@ class LanguageServerPlugin implements PluginValue {
 
     private documentUri: string;
     private languageId: string;
+    private prefix: Text;
+    private suffix: Text;
     private documentVersion: number;
     
     private changesTimeout: number;
@@ -249,13 +253,15 @@ class LanguageServerPlugin implements PluginValue {
         this.client = this.view.state.facet(client);
         this.documentUri = this.view.state.facet(documentUri);
         this.languageId = this.view.state.facet(languageId);
+        this.prefix = this.view.state.facet(prefix);
+        this.suffix = this.view.state.facet(suffix);
         this.documentVersion = 0;
         this.changesTimeout = 0;
 
         this.client.attachPlugin(this);
         
         this.initialize({
-            documentText: this.view.state.doc.toString(),
+            documentText: this.view.state.doc,
         });
     }
 
@@ -264,7 +270,7 @@ class LanguageServerPlugin implements PluginValue {
         if (this.changesTimeout) clearTimeout(this.changesTimeout);
         this.changesTimeout = self.setTimeout(() => {
             this.sendChange({
-                documentText: this.view.state.doc.toString(),
+                documentText: this.view.state.doc,
             });
         }, changesDelay);
     }
@@ -273,7 +279,11 @@ class LanguageServerPlugin implements PluginValue {
         this.client.detachPlugin(this);
     }
 
-    async initialize({ documentText }: { documentText: string }) {
+    fullText(documentText: Text): string {
+        return this.prefix.append(documentText).append(this.suffix).toString();
+    }
+
+    async initialize({ documentText }: { documentText: Text }) {
          if (this.client.initializePromise) {
             await this.client.initializePromise;
         }
@@ -281,13 +291,13 @@ class LanguageServerPlugin implements PluginValue {
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
-                text: documentText,
+                text: this.fullText(documentText),
                 version: this.documentVersion,
             }
         });
     }
 
-    async sendChange({ documentText }: { documentText: string }) {
+    async sendChange({ documentText }: { documentText: Text }) {
         if (!this.client.ready) return;
         try {
             await this.client.textDocumentDidChange({
@@ -295,7 +305,7 @@ class LanguageServerPlugin implements PluginValue {
                     uri: this.documentUri,
                     version: this.documentVersion++,
                 },
-                contentChanges: [{ text: documentText }],
+                contentChanges: [{ text: this.fullText(documentText) }],
             });
         } catch (e) {
             console.error(e);
@@ -303,7 +313,7 @@ class LanguageServerPlugin implements PluginValue {
     }
 
     requestDiagnostics(view: EditorView) {
-        this.sendChange({ documentText: view.state.doc.toString() });
+        this.sendChange({ documentText: view.state.doc });
     }
 
     async requestHoverTooltip(
@@ -320,11 +330,11 @@ class LanguageServerPlugin implements PluginValue {
         const { contents, range } = result;
         let formattedContents = formatContents(contents)
         if (formattedContents.length == 0) return null;
-        let pos = posToOffset(view.state.doc, { line, character })!;
+        let pos = posToOffset(view.state.doc, this.prefix, { line, character })!;
         let end: number;
         if (range) {
-            pos = posToOffset(view.state.doc, range.start)!;
-            end = posToOffset(view.state.doc, range.end);
+            pos = posToOffset(view.state.doc, this.prefix, range.start)!;
+            end = posToOffset(view.state.doc, this.prefix, range.end);
         }
         if (pos === null) return null;
         const dom = document.createElement('div');
@@ -347,7 +357,7 @@ class LanguageServerPlugin implements PluginValue {
     ): Promise<CompletionResult | null> {
         if (!this.client.ready || !this.client.capabilities!.completionProvider) return null;
         this.sendChange({
-            documentText: context.state.doc.toString(),
+            documentText: context.state.doc,
         });
 
         const result = await this.client.textDocumentCompletion({
@@ -439,8 +449,8 @@ class LanguageServerPlugin implements PluginValue {
 
         const diagnostics = params.diagnostics
             .map(({ range, message, severity }) => ({
-                from: posToOffset(this.view.state.doc, range.start)!,
-                to: posToOffset(this.view.state.doc, range.end)!,
+                from: posToOffset(this.view.state.doc, this.prefix, range.start)!,
+                to: posToOffset(this.view.state.doc, this.prefix, range.end)!,
                 severity: ({
                     [DiagnosticSeverity.Error]: 'error',
                     [DiagnosticSeverity.Warning]: 'warning',
@@ -469,6 +479,8 @@ interface LanguageServerBaseOptions {
     workspaceFolders: LSP.WorkspaceFolder[] | null;
     documentUri: string;
     languageId: string;
+    prefix: string;
+    suffix: string;
 }
 
 interface LanguageServerClientOptions extends LanguageServerBaseOptions {
@@ -496,17 +508,21 @@ export function languageServer(options: LanguageServerWebsocketOptions){
 
 export function languageServerWithTransport(options: LanguageServerOptions) {
     let plugin: LanguageServerPlugin | null = null;
+    let prefixTxt: Text = Text.of(options.prefix?.split('\n')||['']);
+    let suffixTxt: Text = Text.of(options.suffix?.split('\n')||['']);
 
     return [
         client.of(options.client || new LanguageServerClient({...options, autoClose: true})),
         documentUri.of(options.documentUri),
         languageId.of(options.languageId),
+        prefix.of(prefixTxt),
+        suffix.of(suffixTxt),
         ViewPlugin.define((view) => (plugin = new LanguageServerPlugin(view, options.allowHTMLContent))),
         hoverTooltip(
             (view, pos) =>
                 plugin?.requestHoverTooltip(
                     view,
-                    offsetToPos(view.state.doc, pos)
+                    offsetToPos(view.state.doc, prefixTxt, pos)
                 ) ?? null
         ),
         autocompletion({
@@ -529,7 +545,7 @@ export function languageServerWithTransport(options: LanguageServerOptions) {
                     }
                     return await plugin.requestCompletion(
                         context,
-                        offsetToPos(state.doc, pos),
+                        offsetToPos(state.doc, prefixTxt, pos),
                         {
                             triggerKind: trigKind,
                             triggerCharacter: trigChar,
@@ -541,18 +557,21 @@ export function languageServerWithTransport(options: LanguageServerOptions) {
     ];
 }
 
-function posToOffset(doc: Text, pos: { line: number; character: number }) {
-    if (pos.line >= doc.lines) return;
-    const offset = doc.line(pos.line + 1).from + pos.character;
-    if (offset > doc.length) return;
-    return offset;
+function posToOffset(doc: Text, prefix: Text, pos: { line: number; character: number }) {
+    const fullTxt = prefix.append(doc);
+    if (pos.line >= fullTxt.lines) return doc.length;
+    const offset = fullTxt.line(pos.line + 1).from + pos.character;
+    if (offset > fullTxt.length) return doc.length;
+    return offset - prefix.length;
 }
 
-function offsetToPos(doc: Text, offset: number) {
-    const line = doc.lineAt(offset);
+function offsetToPos(doc: Text, prefix: Text, offset: number) {
+    const fullTxt = prefix.append(doc);
+    const fullOffset = offset + prefix.length;
+    const line = fullTxt.lineAt(fullOffset);
     return {
         line: line.number - 1,
-        character: offset - line.from,
+        character: fullOffset - line.from,
     };
 }
 
