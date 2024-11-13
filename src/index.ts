@@ -391,10 +391,12 @@ class LanguageServerPlugin implements PluginValue {
                     filterText: string;
                     sortText?: string;
                     apply: string;
+                    from: number;
                 } = {
                     label,
                     detail,
                     apply: textEdit?.newText ?? label,
+                    from: posToOffset(context.state.doc, this.prefix, (textEdit as LSP.TextEdit)?.range?.start),
                     type: kind && CompletionItemKindMap[kind].toLowerCase(),
                     sortText: sortText ?? label,
                     filterText: filterText ?? label,
@@ -406,34 +408,21 @@ class LanguageServerPlugin implements PluginValue {
             }
         );
 
-        const [span, match] = prefixMatch(options);
-        const token = context.matchBefore(match);
-        let { pos } = context;
-
-        if (token) {
-            pos = token.from;
-            const word = token.text.toLowerCase();
-            if (/^\w+$/.test(word)) {
-                options = options
-                    .filter(({ filterText }) =>
-                        filterText.toLowerCase().startsWith(word)
-                    )
-                    .sort(({ apply: a }, { apply: b }) => {
-                        switch (true) {
-                            case a.startsWith(token.text) &&
-                                !b.startsWith(token.text):
-                                return -1;
-                            case !a.startsWith(token.text) &&
-                                b.startsWith(token.text):
-                                return 1;
+        const from = Math.min(...options.map(o => o.from));
+        const to = context.pos;
+        if (from < to) {
+            const prefix = context.matchBefore(new RegExp('.{' + (to - from) + '}'));
+            options.forEach(o => {
+                if (o.from > from) {
+                    o.apply = prefix.text.substring(0, o.from - from) + o.apply;
                 }
-                        return 0;
             });
         }
-        }
+
         return {
-            from: pos,
+            from,
             options,
+            filter: false
         };
     }
 
