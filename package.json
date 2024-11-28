@@ -4,7 +4,10 @@
   "description": "Language Server Plugin for CodeMirror 6",
   "main": "dist/index.js",
   "scripts": {
-    "prepare": "rollup -c --bundleConfigAsCjs rollup.config.js"
+    "all": "run-s clean build",
+    "clean": "del-cli dist",
+    "build": "rollup -c --bundleConfigAsCjs rollup.config.js",
+    "prepare": "run-s build"
   },
   "author": {
     "name": "Mahmud Ridwan",
