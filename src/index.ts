@@ -554,8 +554,8 @@ function posToOffset(doc: Text, prefix: Text, pos: { line: number; character: nu
     const fullTxt = prefix.append(doc);
     if (pos.line >= fullTxt.lines) return doc.length;
     const offset = fullTxt.line(pos.line + 1).from + pos.character;
-    if (offset > fullTxt.length) return doc.length;
-    return offset - prefix.length;
+    if (offset >= fullTxt.length) return doc.length;
+    return Math.max(offset - prefix.length, 0);
 }
 
 function offsetToPos(doc: Text, prefix: Text, offset: number) {
