@@ -256,6 +256,7 @@ class LanguageServerPlugin implements PluginValue {
     private prefix: Text;
     private suffix: Text;
     private documentVersion: number;
+    private documentDirty: boolean;
 
     private changesTimeout: number;
 
@@ -266,6 +267,7 @@ class LanguageServerPlugin implements PluginValue {
         this.prefix = this.view.state.facet(prefix);
         this.suffix = this.view.state.facet(suffix);
         this.documentVersion = 0;
+        this.documentDirty = false;
         this.changesTimeout = 0;
 
         this.client.attachPlugin(this);
@@ -277,6 +279,7 @@ class LanguageServerPlugin implements PluginValue {
 
     public update({ docChanged }: ViewUpdate) {
         if (!docChanged) { return; }
+        this.documentDirty = true;
         if (this.changesTimeout) { clearTimeout(this.changesTimeout); }
         this.changesTimeout = self.setTimeout(() => {
             this.sendChange({
@@ -308,7 +311,8 @@ class LanguageServerPlugin implements PluginValue {
     }
 
     public async sendChange({ documentText }: { documentText: Text }) {
-        if (!this.client.ready) { return; }
+        if (!this.client.ready || !this.documentDirty) { return; }
+        this.documentDirty = false;        
         try {
             await this.client.textDocumentDidChange({
                 textDocument: {
