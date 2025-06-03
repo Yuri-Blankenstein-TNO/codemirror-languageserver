@@ -322,13 +322,16 @@ class LanguageServerPlugin implements PluginValue {
     ): Promise<Tooltip | null> {
         if (!this.client.ready || !this.client.capabilities!.hoverProvider) { return null; }
 
-        this.sendChange({ documentText: view.state.doc.toString() });
         const result = await this.client.textDocumentHover({
             textDocument: { uri: this.documentUri },
             position: { line, character },
         });
         if (!result) { return null; }
         const { contents, range } = result;
+        let formattedContents = formatContents(contents);
+        if (formattedContents.length == 0) {
+            return null;
+        }
         let pos = posToOffset(view.state.doc, { line, character })!;
         let end: number;
         if (range) {
@@ -339,9 +342,9 @@ class LanguageServerPlugin implements PluginValue {
         const dom = document.createElement("div");
         dom.classList.add("documentation");
         if (this.allowHTMLContent) {
-            dom.innerHTML = formatContents(contents);
+            dom.innerHTML = formattedContents;
         } else {
-            dom.textContent = formatContents(contents);
+            dom.textContent = formattedContents;
         }
         return {
             pos,
