@@ -397,33 +397,18 @@ class LanguageServerPlugin implements PluginValue {
 
         let items = "items" in result ? result.items : result;
 
-        const [span, match] = prefixMatch(items);
-        const token = context.matchBefore(match);
         let { pos } = context;
 
-        if (token) {
-            pos = token.from;
-            const word = token.text.toLowerCase();
-            if (/^\w+$/.test(word)) {
-                items = items
-                    .filter(({ label, filterText }) => {
-                        const text = filterText ?? label;
-                        return text.toLowerCase().startsWith(word);
-                    })
-                    .sort((a, b) => {
-                        const aText = a.sortText ?? a.label;
-                        const bText = b.sortText ?? b.label;
-                        switch (true) {
-                            case aText.startsWith(token.text) &&
-                                !bText.startsWith(token.text):
-                                return -1;
-                            case !aText.startsWith(token.text) &&
-                                bText.startsWith(token.text):
-                                return 1;
-                        }
-                        return 0;
-                    });
+        // Only show (partial) matches if available 
+        // (i.e. any item that starts before the current position)
+        let matchedItems = items.filter(({ textEdit }) => {
+            if (isLSPTextEdit(textEdit)) { 
+                let start = textEdit.range.start;
+                return start.line < line || (start.line == line && start.character < character);
             }
+        });
+        if (matchedItems.length > 0) {
+            items = matchedItems;
         }
 
         const options = items.map(
