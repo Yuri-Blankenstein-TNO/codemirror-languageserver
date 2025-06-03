@@ -1,6 +1,6 @@
 import { autocompletion, insertCompletionText } from "@codemirror/autocomplete";
 import { setDiagnostics } from "@codemirror/lint";
-import { Facet } from "@codemirror/state";
+import { EditorState, Facet } from "@codemirror/state";
 import { EditorView, hoverTooltip, Tooltip, ViewPlugin } from "@codemirror/view";
 import {
     Client,
@@ -18,7 +18,7 @@ import type {
     CompletionContext,
     CompletionResult,
 } from "@codemirror/autocomplete";
-import type { Text } from "@codemirror/state";
+import { Text } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import { Transport } from "@open-rpc/client-js/build/transports/Transport";
 import { marked } from "marked/lib/marked.esm.js";
@@ -37,6 +37,8 @@ const useLast = (values: readonly any[]) => values.reduce((_, v) => v, "");
 const client = Facet.define<LanguageServerClient, LanguageServerClient>({ combine: useLast });
 const documentUri = Facet.define<string, string>({ combine: useLast });
 const languageId = Facet.define<string, string>({ combine: useLast });
+const prefix = Facet.define<Text, Text>({ combine: useLast });
+const suffix = Facet.define<Text, Text>({ combine: useLast });
 
 // https://microsoft.github.io/language-server-protocol/specifications/specification-current/
 
@@ -251,6 +253,8 @@ class LanguageServerPlugin implements PluginValue {
 
     private documentUri: string;
     private languageId: string;
+    private prefix: Text;
+    private suffix: Text;
     private documentVersion: number;
 
     private changesTimeout: number;
@@ -259,13 +263,15 @@ class LanguageServerPlugin implements PluginValue {
         this.client = this.view.state.facet(client);
         this.documentUri = this.view.state.facet(documentUri);
         this.languageId = this.view.state.facet(languageId);
+        this.prefix = this.view.state.facet(prefix);
+        this.suffix = this.view.state.facet(suffix);
         this.documentVersion = 0;
         this.changesTimeout = 0;
 
         this.client.attachPlugin(this);
 
         this.initialize({
-            documentText: this.view.state.doc.toString(),
+            documentText: this.view.state.doc,
         });
     }
 
@@ -274,7 +280,7 @@ class LanguageServerPlugin implements PluginValue {
         if (this.changesTimeout) { clearTimeout(this.changesTimeout); }
         this.changesTimeout = self.setTimeout(() => {
             this.sendChange({
-                documentText: this.view.state.doc.toString(),
+                documentText: this.view.state.doc,
             });
         }, changesDelay);
     }
@@ -283,7 +289,11 @@ class LanguageServerPlugin implements PluginValue {
         this.client.detachPlugin(this);
     }
 
-    public async initialize({ documentText }: { documentText: string }) {
+    fullText(documentText: Text): string {
+        return this.prefix.append(documentText).append(this.suffix).toString();
+    }
+
+    public async initialize({ documentText }: { documentText: Text }) {
          if (this.client.initializePromise) {
             await this.client.initializePromise;
         }
@@ -291,13 +301,13 @@ class LanguageServerPlugin implements PluginValue {
             textDocument: {
                 uri: this.documentUri,
                 languageId: this.languageId,
-                text: documentText,
+                text: this.fullText(documentText),
                 version: this.documentVersion,
             },
         });
     }
 
-    public async sendChange({ documentText }: { documentText: string }) {
+    public async sendChange({ documentText }: { documentText: Text }) {
         if (!this.client.ready) { return; }
         try {
             await this.client.textDocumentDidChange({
@@ -305,7 +315,7 @@ class LanguageServerPlugin implements PluginValue {
                     uri: this.documentUri,
                     version: this.documentVersion++,
                 },
-                contentChanges: [{ text: documentText }],
+                contentChanges: [{ text: this.fullText(documentText) }],
             });
         } catch (e) {
             console.error(e);
@@ -313,7 +323,7 @@ class LanguageServerPlugin implements PluginValue {
     }
 
     public requestDiagnostics(view: EditorView) {
-        this.sendChange({ documentText: view.state.doc.toString() });
+        this.sendChange({ documentText: view.state.doc });
     }
 
     public async requestHoverTooltip(
@@ -332,11 +342,11 @@ class LanguageServerPlugin implements PluginValue {
         if (formattedContents.length == 0) {
             return null;
         }
-        let pos = posToOffset(view.state.doc, { line, character })!;
+        let pos = posToOffset(view.state, { line, character })!;
         let end: number;
         if (range) {
-            pos = posToOffset(view.state.doc, range.start)!;
-            end = posToOffset(view.state.doc, range.end);
+            pos = posToOffset(view.state, range.start)!;
+            end = posToOffset(view.state, range.end);
         }
         if (pos === null) { return null; }
         const dom = document.createElement("div");
@@ -367,7 +377,7 @@ class LanguageServerPlugin implements PluginValue {
     ): Promise<CompletionResult | null> {
         if (!this.client.ready || !this.client.capabilities!.completionProvider) { return null; }
         this.sendChange({
-            documentText: context.state.doc.toString(),
+            documentText: context.state.doc,
         });
 
         const result = await this.client.textDocumentCompletion({
@@ -430,8 +440,8 @@ class LanguageServerPlugin implements PluginValue {
                                 insertCompletionText(
                                     view.state,
                                     textEdit.newText,
-                                    posToOffset(view.state.doc, textEdit.range.start),
-                                    posToOffset(view.state.doc, textEdit.range.end),
+                                    posToOffset(view.state, textEdit.range.start),
+                                    posToOffset(view.state, textEdit.range.end),
                                 ),
                             );
                         } else {
@@ -442,9 +452,9 @@ class LanguageServerPlugin implements PluginValue {
                         }
                         additionalTextEdits
                             .sort(({ range: { end: a } }, { range: { end: b } }) => {
-                                if (posToOffset(view.state.doc, a) < posToOffset(view.state.doc, b)) {
+                                if (posToOffset(view.state, a) < posToOffset(view.state, b)) {
                                     return 1;
-                                } else if (posToOffset(view.state.doc, a) > posToOffset(view.state.doc, b)) {
+                                } else if (posToOffset(view.state, a) > posToOffset(view.state, b)) {
                                     return -1;
                                 }
                                 return 0;
@@ -452,8 +462,8 @@ class LanguageServerPlugin implements PluginValue {
                             .forEach((textEdit) => {
                                 view.dispatch(view.state.update({
                                     changes: {
-                                        from: posToOffset(view.state.doc, textEdit.range.start),
-                                        to: posToOffset(view.state.doc, textEdit.range.end),
+                                        from: posToOffset(view.state, textEdit.range.start),
+                                        to: posToOffset(view.state, textEdit.range.end),
                                         insert: textEdit.newText,
                                     },
                                 }));
@@ -491,8 +501,8 @@ class LanguageServerPlugin implements PluginValue {
 
         const diagnostics = params.diagnostics
             .map(({ range, message, severity }) => ({
-                from: posToOffset(this.view.state.doc, range.start)!,
-                to: posToOffset(this.view.state.doc, range.end)!,
+                from: posToOffset(this.view.state, range.start)!,
+                to: posToOffset(this.view.state, range.end)!,
                 severity: ({
                     [DiagnosticSeverity.Error]: "error",
                     [DiagnosticSeverity.Warning]: "warning",
@@ -521,6 +531,8 @@ interface LanguageServerBaseOptions {
     workspaceFolders: LSP.WorkspaceFolder[] | null;
     documentUri: string;
     languageId: string;
+    prefix: string;
+    suffix: string;
 }
 
 interface LanguageServerClientOptions extends LanguageServerBaseOptions {
@@ -548,17 +560,21 @@ export function languageServer(options: LanguageServerWebsocketOptions) {
 
 export function languageServerWithTransport(options: LanguageServerOptions) {
     let plugin: LanguageServerPlugin | null = null;
+    let prefixTxt: Text = Text.of(options.prefix?.split('\n')||['']);
+    let suffixTxt: Text = Text.of(options.suffix?.split('\n')||['']);
 
     return [
         client.of(options.client || new LanguageServerClient({...options, autoClose: true})),
         documentUri.of(options.documentUri),
         languageId.of(options.languageId),
+        prefix.of(prefixTxt),
+        suffix.of(suffixTxt),
         ViewPlugin.define((view) => (plugin = new LanguageServerPlugin(view, options.allowHTMLContent))),
         hoverTooltip(
             (view, pos) =>
                 plugin?.requestHoverTooltip(
                     view,
-                    offsetToPos(view.state.doc, pos),
+                    offsetToPos(view.state, pos),
                 ) ?? null,
         ),
         autocompletion({
@@ -589,7 +605,7 @@ export function languageServerWithTransport(options: LanguageServerOptions) {
                     }
                     return await plugin.requestCompletion(
                         context,
-                        offsetToPos(state.doc, pos),
+                        offsetToPos(state, pos),
                         {
                             triggerCharacter: trigChar,
                             triggerKind: trigKind,
@@ -601,17 +617,22 @@ export function languageServerWithTransport(options: LanguageServerOptions) {
     ];
 }
 
-function posToOffset(doc: Text, pos: { line: number; character: number }) {
-    if (pos.line >= doc.lines) { return; }
-    const offset = doc.line(pos.line + 1).from + pos.character;
-    if (offset > doc.length) { return; }
-    return offset;
+function posToOffset(state: EditorState, pos: { line: number; character: number }) {
+    const prefixTxt = state.facet(prefix);
+    const fullTxt = prefixTxt.append(state.doc);
+    if (pos.line >= fullTxt.lines) { return state.doc.length; };
+    const offset = fullTxt.line(pos.line + 1).from + pos.character;
+    if (offset >= fullTxt.length) { return state.doc.length; }
+    return Math.max(offset - prefixTxt.length, 0);
 }
 
-function offsetToPos(doc: Text, offset: number) {
-    const line = doc.lineAt(offset);
+function offsetToPos(state: EditorState, offset: number) {
+    const prefixTxt = state.facet(prefix);
+    const fullTxt = prefixTxt.append(state.doc);
+    const fullOffset = offset + prefixTxt.length;
+    const line = fullTxt.lineAt(fullOffset);
     return {
-        character: offset - line.from,
+        character: fullOffset - line.from,
         line: line.number - 1,
     };
 }
