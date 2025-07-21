@@ -57,6 +57,7 @@ interface LSPNotifyMap {
     initialized: LSP.InitializedParams;
     "textDocument/didChange": LSP.DidChangeTextDocumentParams;
     "textDocument/didOpen": LSP.DidOpenTextDocumentParams;
+    "textDocument/didClose": LSP.DidCloseTextDocumentParams;
 }
 
 // Server to client
@@ -201,6 +202,10 @@ export class LanguageServerClient {
 
     public textDocumentDidOpen(params: LSP.DidOpenTextDocumentParams) {
         return this.notify("textDocument/didOpen", params);
+    }
+
+    public textDocumentDidClose(params: LSP.DidOpenTextDocumentParams) {
+        return this.notify("textDocument/didClose", params);
     }
 
     public textDocumentDidChange(params: LSP.DidChangeTextDocumentParams) {
