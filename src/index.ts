@@ -21,7 +21,7 @@ import type {
 import { Text } from "@codemirror/state";
 import type { PluginValue, ViewUpdate } from "@codemirror/view";
 import { Transport } from "@open-rpc/client-js/build/transports/Transport";
-import { marked } from "marked/lib/marked.esm.js";
+import { marked } from "marked";
 import type { PublishDiagnosticsParams } from "vscode-languageserver-protocol";
 import type * as LSP from "vscode-languageserver-protocol";
 

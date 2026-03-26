@@ -1,5 +1,5 @@
 import babel from '@rollup/plugin-babel';
-import ts from 'rollup-plugin-ts';
+import typescript from '@rollup/plugin-typescript';
 
 export default {
 	input: 'src/index.ts',
@@ -8,7 +8,7 @@ export default {
 		format: 'es'
 	},
 	plugins: [
-		ts(),
+		typescript(),
 		babel({
 			babelHelpers: 'bundled'
 		})
